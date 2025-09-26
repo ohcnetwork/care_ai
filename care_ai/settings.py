@@ -98,14 +98,15 @@ class PluginSettings:  # pragma: no cover
 
 
 REQUIRED_SETTINGS = {
-    "CARE_AI_MODEL",
+    "CARE_AI_DEFAULT_MODEL",
 }
 
 DEFAULTS = {
     "CARE_AI_MAX_IMAGES": 5,
     "CARE_AI_MAX_IMAGE_SIZE_MB": 2,
     "CARE_AI_MAX_TOKENS_PER_USER": 10000,
-    "CARE_AI_MODEL": "",
+    "CARE_AI_DEFAULT_MODEL": "",
+    "CARE_AI_ALLOWED_MODELS": "",
     "CARE_AI_SYSTEM_PROMPT": "",
 }
 

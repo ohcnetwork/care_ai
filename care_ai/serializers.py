@@ -4,8 +4,18 @@ from .settings import plugin_settings as settings
 
 max_image_size_bytes = settings.CARE_AI_MAX_IMAGE_SIZE_MB * 1024 * 1024
 
+allowed_models = (
+    settings.CARE_AI_ALLOWED_MODELS.split(",")
+    if settings.CARE_AI_ALLOWED_MODELS
+    else [settings.CARE_AI_DEFAULT_MODEL]
+)
+
 
 class ContentInputSerializer(serializers.Serializer):
+    model = serializers.ChoiceField(
+        choices=[(model, model) for model in allowed_models],
+        default=settings.CARE_AI_DEFAULT_MODEL,
+    )
     text = serializers.CharField(required=False, allow_blank=True)
     images = serializers.ListField(
         child=serializers.ImageField(), required=False, allow_empty=True

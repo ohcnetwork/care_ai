@@ -31,7 +31,7 @@ ai_plug = Plug(
         "CARE_AI_MAX_IMAGES" : 5,
         "CARE_AI_MAX_IMAGE_SIZE_MB" : 2,
         "CARE_AI_MAX_TOKENS_PER_USER" : 10000,
-        "CARE_AI_MODEL" : "github/gpt-4o",
+        "CARE_AI_DEFAULT_MODEL" : "github/gpt-4o",
     },
 )
 plugs = [ai_plug]

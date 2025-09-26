@@ -32,7 +32,7 @@ def encode_image(image) -> str:
     return f"data:{image.content_type};base64,{b64encode(image.read()).decode()}"
 
 
-def ask_ai(text: str, images: list) -> str:
+def ask_ai(model: str, text: str, images: list) -> str:
     message = prompt.copy()
 
     message.append(
@@ -42,6 +42,8 @@ def ask_ai(text: str, images: list) -> str:
         }
     )
     if images:
+        if not litellm.supports_vision(model=model):
+            raise ValueError(f"Model {model} does not support image inputs")
         for image in images:
             message[-1]["content"].append(
                 {
@@ -55,7 +57,7 @@ def ask_ai(text: str, images: list) -> str:
 
     start = time.time()
     response = litellm.completion(
-        model=settings.CARE_AI_MODEL,
+        model=model,
         messages=message,
         max_tokens=1000,
     )
