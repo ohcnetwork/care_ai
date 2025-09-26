@@ -1,0 +1,32 @@
+name: 'Manual Deploy to DigitalOcean (care-staging)'
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy_to_digital_ocean:
+    name: Deploy to DigitalOcean App Platform
+    runs-on: ubuntu-latest
+    steps:
+      - id: redeploy
+        shell: bash
+        env:
+          DO_TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+          APP_ID:   ${{ secrets.DIGITAL_OCEAN_APP_ID }}
+        run: |
+          set -euo pipefail
+  
+          echo "🔑 Using app: $APP_ID"
+          BODY='{"force_build":true}'
+          echo "::group::Calling DigitalOcean Apps API"
+          curl -sSf -X POST \
+            -H "Authorization: Bearer ${DO_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$BODY" \
+            "https://api.digitalocean.com/v2/apps/${APP_ID}/deployments" \
+            -o /tmp/api_response.json
+          cat /tmp/api_response.json
+          echo "::endgroup::"
+  
+          DEPLOY_ID=$(jq -r '.deployment.id' /tmp/api_response.json)
+          echo "deployment_id=$DEPLOY_ID" >> "$GITHUB_OUTPUT"
