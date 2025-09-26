@@ -32,6 +32,7 @@ ai_plug = Plug(
         "CARE_AI_MAX_IMAGE_SIZE_MB" : 2,
         "CARE_AI_MAX_TOKENS_PER_USER" : 10000,
         "CARE_AI_DEFAULT_MODEL" : "github/gpt-4o",
+        "CARE_AI_ALLOWED_MODELS" : "github/gpt-4o,github/gpt-5-mini",
     },
 )
 plugs = [ai_plug]
@@ -40,8 +41,11 @@ plugs = [ai_plug]
 
 the api key of the api provider needs to added to the environment eg.
 
+```bash
+    GITHUB_API_KEY=your_github_api_key
+```
 
-The plugin will try to find the API key from the config first and then from the environment variable.
+refer to [litellm](https://docs.litellm.ai/docs/providers) for supported providers and environment variables.
 
 ## License
 
