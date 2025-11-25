@@ -40,7 +40,6 @@ class AskAIView(APIView):
         AIPermission,
     ]
 
-    # ContentInputSerializer
     extend_schema(
         description="Endpoint to interact with the AI model. Accepts text and optional images, returns AI-generated response.",
         request=ContentInputSerializer,
@@ -48,15 +47,14 @@ class AskAIView(APIView):
             200: {"type": "object", "properties": {"result": {"type": "string"}}}
         },
     )
-
     def post(self, request):
-        print(request.data)
         serializer = ContentInputSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
         model = data.get("model") or settings.CARE_AI_DEFAULT_MODEL
         text = data.get("text")
         images = data.get("images")
+        pdfs = data.get("pdfs")
 
         usage, _ = UserAiUsageStats.objects.get_or_create(user=request.user)
 
@@ -67,7 +65,7 @@ class AskAIView(APIView):
             )
 
         try:
-            ai_output, tokens_used = ask_ai(model, text, images)
+            ai_output, tokens_used = ask_ai(model, text, images, pdfs)
             usage.update_stats(
                 input_tokens=tokens_used["input"],
                 output_tokens=tokens_used["output"],
@@ -76,7 +74,7 @@ class AskAIView(APIView):
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            logger.debug(e)
+            logger.error(e)
             return Response(
                 {"detail": "AI processing failed"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,

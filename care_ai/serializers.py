@@ -3,6 +3,7 @@ from rest_framework import serializers
 from .settings import plugin_settings as settings
 
 max_image_size_bytes = settings.CARE_AI_MAX_IMAGE_SIZE_MB * 1024 * 1024
+max_pdf_size_bytes = settings.CARE_AI_MAX_PDFS * 1024 * 1024
 
 allowed_models = (
     settings.CARE_AI_ALLOWED_MODELS.split(",")
@@ -20,6 +21,9 @@ class ContentInputSerializer(serializers.Serializer):
     images = serializers.ListField(
         child=serializers.ImageField(), required=False, allow_empty=True
     )
+    pdfs = serializers.ListField(
+        child=serializers.FileField(), required=False, allow_empty=True
+    )
 
     def validate_images(self, value):
         errors = []
@@ -34,13 +38,27 @@ class ContentInputSerializer(serializers.Serializer):
         if errors:
             raise serializers.ValidationError(errors)
         return value
+    
+    def validate_pdfs(self, value):
+        errors = []
+        if len(value) > settings.CARE_AI_MAX_PDFS:
+            errors.append(
+                f"Number of PDFs exceeds the maximum limit of {settings.CARE_AI_MAX_PDFS}."
+            )
+
+        for pdf in value:
+            if pdf.size > max_pdf_size_bytes:
+                errors.append(f"PDF {pdf.name} exceeds the maximum size of 2MB.")
+        if errors:
+            raise serializers.ValidationError(errors)
+        return value
 
     def validate(self, attrs):
-        if not attrs.get("text") and not attrs.get("images"):
+        if not attrs.get("text") and not attrs.get("images") and not attrs.get("pdfs"):
             raise serializers.ValidationError(
-                "At least one of 'text' or 'images' must be provided."
+                "At least one of 'text', 'images' or 'pdfs' must be provided."
             )
         return attrs
 
     class Meta:
-        fields = ["text", "images"]
+        fields = ["text", "images", "pdfs", "model"]

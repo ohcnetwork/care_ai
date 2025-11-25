@@ -2,6 +2,7 @@ import time
 from base64 import b64encode
 
 import litellm
+from litellm.utils import supports_pdf_input
 from django.conf import settings as dj_settings
 
 from .settings import plugin_settings as settings
@@ -11,7 +12,7 @@ if dj_settings.DEBUG:
 
 system_prompt = settings.CARE_AI_SYSTEM_PROMPT or (
     "You are a helpful AI assistant that provides information in medical context based on user input. "
-    "Use the provided text and images to generate accurate and concise responses. "
+    "Use the provided text, images and pdfs to generate accurate and concise responses. "
     "You only have one chance to get it right, so be careful and thorough in your analysis. "
     "Do not hallucinate as this is a critical task."
 )
@@ -23,7 +24,7 @@ prompt = [
     },
     {
         "role": "user",
-        "content": "Given the following text and images, provide a detailed response",
+        "content": "Given the following text, images and pdfs, provide a detailed response",
     },
 ]
 
@@ -31,8 +32,10 @@ prompt = [
 def encode_image(image) -> str:
     return f"data:{image.content_type};base64,{b64encode(image.read()).decode()}"
 
+def encode_pdf(pdf) -> str:
+    return f"data:application/pdf;base64,{b64encode(pdf.read()).decode()}"
 
-def ask_ai(model: str, text: str, images: list) -> str:
+def ask_ai(model: str, text: str, images: list, pdfs: list) -> str:
     message = prompt.copy()
 
     message.append(
@@ -51,6 +54,19 @@ def ask_ai(model: str, text: str, images: list) -> str:
                     "image_url": {
                         "url": encode_image(image),
                         "format": image.content_type,
+                    },
+                }
+            )
+    
+    if pdfs:
+        if not supports_pdf_input(model, None):
+            raise ValueError(f"Model {model} does not support document inputs")
+        for pdf in pdfs:
+            message[-1]["content"].append(
+                {
+                    "type": "file",
+                    "file": {
+                        "file_data": encode_pdf(pdf),
                     },
                 }
             )
