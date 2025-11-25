@@ -109,6 +109,8 @@ DEFAULTS = {
     "CARE_AI_DEFAULT_MODEL": "",
     "CARE_AI_ALLOWED_MODELS": "",
     "CARE_AI_SYSTEM_PROMPT": "",
+    "CARE_AI_MAX_TOKENS": 2000,
+    "CARE_AI_MAX_TOKENS_PARAM_NAME": "max_tokens",
 }
 
 plugin_settings = PluginSettings(

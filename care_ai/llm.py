@@ -13,6 +13,7 @@ if dj_settings.DEBUG:
 system_prompt = settings.CARE_AI_SYSTEM_PROMPT or (
     "You are a helpful AI assistant that provides information in medical context based on user input. "
     "Use the provided text, images and pdfs to generate accurate and concise responses. "
+    "Images and pdfs may be optional, but if provided, you must use them to inform your answers. "
     "You only have one chance to get it right, so be careful and thorough in your analysis. "
     "Do not hallucinate as this is a critical task."
 )
@@ -24,7 +25,7 @@ prompt = [
     },
     {
         "role": "user",
-        "content": "Given the following text, images and pdfs, provide a detailed response",
+        "content": "[Please answer the following question based on the provided text, images, and pdfs. If images or pdfs are provided, make sure to incorporate their information into your response.]",
     },
 ]
 
@@ -75,7 +76,7 @@ def ask_ai(model: str, text: str, images: list, pdfs: list) -> str:
     response = litellm.completion(
         model=model,
         messages=message,
-        max_tokens=1000,
+        **{settings.CARE_AI_MAX_TOKENS_PARAM_NAME: settings.CARE_AI_MAX_TOKENS},
     )
     end = time.time()
 
