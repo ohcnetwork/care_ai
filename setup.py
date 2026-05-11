@@ -15,7 +15,7 @@ requirements = [
     "django",
     "djangorestframework",
     "django-environ",
-    "litellm",
+    "litellm>=1.83.14",
 ]
 
 test_requirements = []

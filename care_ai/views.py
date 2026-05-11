@@ -53,6 +53,7 @@ class AskAIView(APIView):
         data = serializer.validated_data
         model = data.get("model") or settings.CARE_AI_DEFAULT_MODEL
         text = data.get("text")
+        prompt = data.get("prompt")
         images = data.get("images")
         pdfs = data.get("pdfs")
 
@@ -65,7 +66,7 @@ class AskAIView(APIView):
             )
 
         try:
-            ai_output, tokens_used = ask_ai(model, text, images, pdfs)
+            ai_output, tokens_used = ask_ai(model, text, images, pdfs, prompt)
             usage.update_stats(
                 input_tokens=tokens_used["input"],
                 output_tokens=tokens_used["output"],

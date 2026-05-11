@@ -18,12 +18,14 @@ class ContentInputSerializer(serializers.Serializer):
         default=settings.CARE_AI_DEFAULT_MODEL,
     )
     text = serializers.CharField(required=False, allow_blank=True)
+    prompt = serializers.CharField(required=False, allow_blank=True)
     images = serializers.ListField(
         child=serializers.ImageField(), required=False, allow_empty=True
     )
     pdfs = serializers.ListField(
         child=serializers.FileField(), required=False, allow_empty=True
     )
+    
 
     def validate_images(self, value):
         errors = []
@@ -61,4 +63,4 @@ class ContentInputSerializer(serializers.Serializer):
         return attrs
 
     class Meta:
-        fields = ["text", "images", "pdfs", "model"]
+        fields = ["text", "images", "pdfs", "model", "prompt"]

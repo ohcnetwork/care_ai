@@ -36,13 +36,19 @@ def encode_image(image) -> str:
 def encode_pdf(pdf) -> str:
     return f"data:application/pdf;base64,{b64encode(pdf.read()).decode()}"
 
-def ask_ai(model: str, text: str, images: list, pdfs: list) -> str:
+def ask_ai(model: str, text: str, images: list, pdfs: list, custom_prompt: str = None) -> str:
     message = prompt.copy()
 
+    # Combine custom prompt with text if provided
+    if custom_prompt:
+        user_text = f"{custom_prompt}\n\n{text}" if text else custom_prompt
+    else:
+        user_text = text
+    
     message.append(
         {
             "role": "user",
-            "content": [{"type": "text", "text": text}],
+            "content": [{"type": "text", "text": user_text}],
         }
     )
     if images:
