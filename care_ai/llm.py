@@ -10,25 +10,6 @@ from .settings import plugin_settings as settings
 if dj_settings.DEBUG:
     litellm._turn_on_debug()
 
-system_prompt = settings.CARE_AI_SYSTEM_PROMPT or (
-    "You are a helpful AI assistant that provides information in medical context based on user input. "
-    "Use the provided text, images and pdfs to generate accurate and concise responses. "
-    "Images and pdfs may be optional, but if provided, you must use them to inform your answers. "
-    "You only have one chance to get it right, so be careful and thorough in your analysis. "
-    "Do not hallucinate as this is a critical task."
-)
-
-prompt = [
-    {
-        "role": "system",
-        "content": system_prompt,
-    },
-    {
-        "role": "user",
-        "content": "[Please answer the following question based on the provided text, images, and pdfs. If images or pdfs are provided, make sure to incorporate their information into your response.]",
-    },
-]
-
 
 def encode_image(image) -> str:
     return f"data:{image.content_type};base64,{b64encode(image.read()).decode()}"
@@ -37,20 +18,18 @@ def encode_pdf(pdf) -> str:
     return f"data:application/pdf;base64,{b64encode(pdf.read()).decode()}"
 
 def ask_ai(model: str, text: str, images: list, pdfs: list, custom_prompt: str = None) -> str:
-    message = prompt.copy()
-
     # Combine custom prompt with text if provided
     if custom_prompt:
         user_text = f"{custom_prompt}\n\n{text}" if text else custom_prompt
     else:
         user_text = text
     
-    message.append(
+    message = [
         {
             "role": "user",
             "content": [{"type": "text", "text": user_text}],
         }
-    )
+    ]
     if images:
         if not litellm.supports_vision(model=model):
             raise ValueError(f"Model {model} does not support image inputs")
