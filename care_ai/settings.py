@@ -111,6 +111,10 @@ DEFAULTS = {
     "CARE_AI_SYSTEM_PROMPT": "",
     "CARE_AI_MAX_TOKENS": 2000,
     "CARE_AI_MAX_TOKENS_PARAM_NAME": "max_tokens",
+    "CARE_AI_EKA_BASE_URL": "https://api.eka.care",
+    "CARE_AI_EKA_API_KEY": "",
+    "CARE_AI_EKA_POLL_TIMEOUT_SECONDS": 120,
+    "CARE_AI_EKA_POLL_INTERVAL_SECONDS": 3,
 }
 
 plugin_settings = PluginSettings(
