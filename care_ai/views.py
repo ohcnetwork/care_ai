@@ -15,9 +15,10 @@ from .constants import FLAG_CONFIG_NAME
 from .eka import (
     EkaCareError,
     EkaCarePendingError,
-    create_eka_document,
-    poll_eka_result,
-    upload_to_presigned_url,
+    fetch_eka_result,
+    get_document_state,
+    set_document_state,
+    upload_document_v2,
 )
 from .llm import ask_ai
 from .models import UserAiUsageStats
@@ -97,10 +98,16 @@ class AskAIView(APIView):
 
 @extend_schema_view(
     post=extend_schema(
-        description="Parses a lab report via eka.care and returns structured vitals.",
+        description="Uploads a lab report to eka.care for async parsing. Returns a document_id to poll.",
         request=EkaLabReportInputSerializer,
         responses={
-            200: {"type": "object", "properties": {"result": {"type": "array"}}}
+            202: {
+                "type": "object",
+                "properties": {
+                    "document_id": {"type": "string"},
+                    "status": {"type": "string"},
+                },
+            }
         },
     )
 )
@@ -134,34 +141,76 @@ class EkaLabReportView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        # TODO: eka.care requires a pre-registered patient OID, not CARE's external_id.
-        # Hardcoded until patient provisioning on eka.care is figured out.
-        patient_id = "178759304785317"
         try:
-            document_id, form_url, form_fields = create_eka_document(
-                patient_id, file_obj.content_type, file_obj.size
+            document_id = upload_document_v2(
+                file_obj, file_obj.name, file_obj.content_type
             )
-            upload_to_presigned_url(
-                form_url, form_fields, file_obj, file_obj.name, file_obj.content_type
-            )
-            smart_report = poll_eka_result(
-                document_id,
-                patient_id,
-                settings.CARE_AI_EKA_POLL_TIMEOUT_SECONDS,
-                settings.CARE_AI_EKA_POLL_INTERVAL_SECONDS,
-            )
-        except EkaCarePendingError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_504_GATEWAY_TIMEOUT)
         except EkaCareError as e:
             logger.error(e)
             return Response({"detail": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        set_document_state(document_id, {"status": "processing"})
+        return Response(
+            {"document_id": document_id, "status": "processing"},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+@extend_schema_view(
+    get=extend_schema(
+        description="Polls the status of a previously uploaded eka.care lab report.",
+        responses={
+            200: {"type": "object", "properties": {"result": {"type": "array"}}}
+        },
+    )
+)
+class EkaLabReportResultView(APIView):
+    permission_classes = [
+        IsAuthenticated,
+        AIPermission,
+    ]
+
+    def get(self, request, document_id):
+        state = get_document_state(document_id)
+        if state is None:
+            return Response(
+                {"detail": "Unknown or expired document"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if state["status"] == "error":
+            return Response(
+                {
+                    "detail": state.get(
+                        "detail", "eka.care failed to process this document"
+                    )
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        if state["status"] != "completed":
+            # eka.care parses async — ask it directly each poll until it's ready.
+            try:
+                results = fetch_eka_result(document_id)
+            except EkaCarePendingError:
+                return Response({"status": "processing"}, status=status.HTTP_200_OK)
+            except EkaCareError as e:
+                logger.error(e)
+                set_document_state(document_id, {"status": "error", "detail": str(e)})
+                return Response({"detail": str(e)}, status=status.HTTP_502_BAD_GATEWAY)
+
+            state = {"status": "completed", "results": results}
+            set_document_state(document_id, state)
 
         results = [
             {
                 "test_name": entry["name"],
                 "value": entry.get("value", ""),
                 "unit": entry.get("unit"),
+                "loinc_code": entry.get("loinc"),
             }
-            for entry in smart_report.get("verified", [])
+            for entry in state["results"]
         ]
-        return Response({"result": results}, status=status.HTTP_200_OK)
+        return Response(
+            {"status": "completed", "result": results}, status=status.HTTP_200_OK
+        )

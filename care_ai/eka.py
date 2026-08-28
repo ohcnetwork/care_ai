@@ -1,8 +1,13 @@
-import time
+import logging
 
 import requests
+from django.core.cache import cache
 
 from .settings import plugin_settings as settings
+
+logger = logging.getLogger(__name__)
+
+DOCUMENT_STATE_TTL_SECONDS = 60 * 60
 
 
 class EkaCareError(Exception):
@@ -10,94 +15,173 @@ class EkaCareError(Exception):
 
 
 class EkaCarePendingError(EkaCareError):
-    """Raised when eka.care has not finished parsing the document within the poll window."""
+    """Raised when eka.care has not finished parsing the document yet."""
 
 
-def _auth_headers(patient_id: str) -> dict:
-    return {
-        "Authorization": f"Bearer {settings.CARE_AI_EKA_API_KEY}",
-        "X-Pt-Id": patient_id,
-    }
+def _auth_headers() -> dict:
+    return {"Authorization": f"Bearer {settings.CARE_AI_EKA_API_KEY}"}
 
 
-def create_eka_document(
-    patient_id: str, content_type: str, file_size: int, doc_type: str = "lr"
-) -> tuple[str, str, dict]:
-    """Obtain a presigned upload URL from eka.care.
-
-    Returns (document_id, form_url, form_fields).
-    """
-    url = f"{settings.CARE_AI_EKA_BASE_URL}/mr/api/v1/docs"
-    payload = {
-        "batch_request": [
-            {
-                "dt": doc_type,
-                "dd_e": int(time.time()),
-                "files": [{"contentType": content_type, "file_size": file_size}],
-            }
-        ]
-    }
-    headers = {**_auth_headers(patient_id), "Content-Type": "application/json"}
-    response = requests.post(url, json=payload, headers=headers, timeout=30)
-    if not response.ok:
-        msg = f"eka.care upload authorization failed: {response.status_code} {response.text}"
-        raise EkaCareError(msg)
-
-    data = response.json()
-    if data.get("error"):
-        raise EkaCareError(
-            data.get("message") or "eka.care upload authorization failed"
-        )
-
-    batch = data["batch_response"][0]
-    if batch.get("error_details"):
-        msg = batch["error_details"].get("message") or "eka.care rejected the document"
-        raise EkaCareError(msg)
-
-    form = batch["forms"][0]
-    return batch["document_id"], form["url"], form["fields"]
+def _document_cache_key(document_id: str) -> str:
+    return f"care_ai:eka:document:{document_id}"
 
 
-def upload_to_presigned_url(
-    form_url: str, form_fields: dict, file_obj, filename: str, content_type: str
-) -> None:
-    """Upload the file bytes to eka.care's presigned S3 URL. Expects a 204 on success."""
+def set_document_state(document_id: str, state: dict) -> None:
+    """Cache processing/completed/error state for a document so repeated polls don't re-hit eka.care once it's done."""
+    cache.set(
+        _document_cache_key(document_id), state, timeout=DOCUMENT_STATE_TTL_SECONDS
+    )
+
+
+def get_document_state(document_id: str) -> dict | None:
+    return cache.get(_document_cache_key(document_id))
+
+
+def upload_document_v2(file_obj, filename: str, content_type: str) -> str:
+    """Upload a document to eka.care's v2 smart-parsing endpoint. Returns the document_id."""
+    url = f"{settings.CARE_AI_EKA_BASE_URL}/mr/api/v2/docs"
     file_obj.seek(0)
     response = requests.post(
-        form_url,
-        data=form_fields,
-        # 'file' must be the last field in the multipart form, per eka.care's docs.
+        url,
+        params={"task": "smart"},
+        headers=_auth_headers(),
         files={"file": (filename, file_obj, content_type)},
         timeout=60,
     )
-    if response.status_code != 204:
-        msg = f"eka.care file upload failed: {response.status_code} {response.text}"
+    if not response.ok:
+        msg = f"eka.care document upload failed: {response.status_code} {response.text}"
         raise EkaCareError(msg)
 
+    data = response.json()
+    document_id = (
+        data.get("document_id") or data.get("transaction_id") or data.get("id")
+    )
+    if not document_id:
+        msg = f"eka.care upload response did not include a document id: {response.text}"
+        raise EkaCareError(msg)
+    return document_id
 
-def poll_eka_result(
-    document_id: str, patient_id: str, timeout: int, interval: int
-) -> dict:
-    """Poll eka.care until the smart_report (structured vitals) is available, or timeout."""
-    url = f"{settings.CARE_AI_EKA_BASE_URL}/mr/api/v1/docs/{document_id}"
-    headers = _auth_headers(patient_id)
-    deadline = time.time() + timeout
 
-    while True:
-        response = requests.get(url, headers=headers, timeout=30)
-        if response.status_code == 404:
-            raise EkaCareError("eka.care could not find the requested document")
-        if not response.ok:
-            msg = (
-                f"eka.care result fetch failed: {response.status_code} {response.text}"
-            )
-            raise EkaCareError(msg)
+def _find_loinc_code(coding_list: list[dict]) -> str | None:
+    for coding in coding_list:
+        if coding.get("system") == "http://loinc.org":
+            return coding.get("code")
+    return None
 
-        data = response.json()
-        if data.get("smart_report"):
-            return data["smart_report"]
 
-        if time.time() >= deadline:
-            raise EkaCarePendingError("eka.care is still processing this document")
+def _extract_observation(resource: dict) -> dict | None:
+    """Pull {name, value, unit, loinc} out of a single FHIR Observation resource."""
+    code = resource.get("code", {})
+    coding_list = code.get("coding") or [{}]
+    coding = coding_list[0]
+    name = code.get("text") or coding.get("display") or coding.get("code")
+    if name is None:
+        return None
+    quantity = resource.get("valueQuantity") or {}
+    value = quantity.get("value")
+    if value is None:
+        value = resource.get("valueString", "")
+    return {
+        "name": name,
+        "value": str(value),
+        "unit": quantity.get("unit"),
+        "loinc": _find_loinc_code(coding_list),
+    }
 
-        time.sleep(interval)
+
+def _extract_results(data) -> list[dict]:
+    """Normalize eka.care's parsed payload into a flat [{name, value, unit}] list.
+
+    `data.output.data` (once populated) has been observed as a *list*. The confirmed
+    real shape is `{"test_name": ..., "loinc_id": ..., "data": {"value": ..., "unit_processed": ...}}`
+    per item; a few other shapes (older `smart_report.verified[]`, a FHIR Bundle of
+    Observations, a bare Observation, or an already-flat {name, value} result) are
+    also handled defensively since eka hasn't published a fixed schema for this payload.
+    """
+    if isinstance(data, list):
+        results = []
+        for item in data:
+            results.extend(_extract_results(item))
+        return results
+
+    if not isinstance(data, dict):
+        logger.warning("eka.care result payload had an unrecognized item: %r", data)
+        return []
+
+    smart_report = data.get("smart_report")
+    if smart_report:
+        return [
+            {
+                "name": entry["name"],
+                "value": entry.get("value", ""),
+                "unit": entry.get("unit"),
+            }
+            for entry in smart_report.get("verified", [])
+        ]
+
+    if data.get("resourceType") == "Bundle":
+        results = []
+        for entry in data.get("entry", []):
+            resource = entry.get("resource", {})
+            if resource.get("resourceType") != "Observation":
+                continue
+            observation = _extract_observation(resource)
+            if observation:
+                results.append(observation)
+        return results
+
+    if data.get("resourceType") == "Observation":
+        observation = _extract_observation(data)
+        return [observation] if observation else []
+
+    if "test_name" in data:
+        # Confirmed real shape: {"test_name": "WBC", "loinc_id": "...", "data": {"value": 2.77, "unit_processed": "10*3/mm3", ...}}
+        value_block = data.get("data") or {}
+        return [
+            {
+                "name": data["test_name"],
+                "value": value_block.get("value", ""),
+                "unit": value_block.get("unit_processed") or value_block.get("unit"),
+                "loinc": data.get("loinc_id"),
+            }
+        ]
+
+    if "name" in data and "value" in data:
+        return [
+            {
+                "name": data["name"],
+                "value": data.get("value", ""),
+                "unit": data.get("unit"),
+                "loinc": data.get("loinc"),
+            }
+        ]
+
+    # Unknown/incomplete shape — treat as still processing rather than failing outright,
+    # since eka hasn't documented what an in-progress payload looks like.
+    logger.warning("eka.care result payload had an unrecognized shape: %s", data)
+    return []
+
+
+def fetch_eka_result(document_id: str) -> list[dict]:
+    """Fetch eka.care's parsed result for a document, once, and raise if not ready yet.
+
+    Called on every poll from `EkaLabReportResultView` until it succeeds. The response
+    envelope is `{"status": ..., "data": {"output": {"data": ...}}}`, where
+    `data.output.data` is null until parsing finishes.
+    """
+    url = f"{settings.CARE_AI_EKA_BASE_URL}/mr/api/v1/docs/{document_id}/result"
+    response = requests.get(url, headers=_auth_headers(), timeout=30)
+    if response.status_code == 404:
+        raise EkaCareError("eka.care could not find the requested document")
+    if not response.ok:
+        msg = f"eka.care result lookup failed: {response.status_code} {response.text}"
+        raise EkaCareError(msg)
+
+    envelope = response.json()
+    last_status = envelope.get("status")
+    payload = (envelope.get("data") or {}).get("output", {}).get("data")
+    results = _extract_results(payload) if payload else []
+    if not results:
+        msg = f"eka.care is still processing this document (last status: {last_status})"
+        raise EkaCarePendingError(msg)
+    return results
